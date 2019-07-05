@@ -23,7 +23,7 @@ namespace googlemapsforms.iOS
         //
         public override bool FinishedLaunching(UIApplication app, NSDictionary options)
         {
-            MapServices.ProvideAPIKey("AIzaSyDhXULEebHg9B2dxfE8CFwSskWGHqndJEQ");
+            MapServices.ProvideAPIKey("AIzaSyA8iECZ9g4RhtED_Mn5XX_fUS0w0CvnAug");
 
             global::Xamarin.Forms.Forms.Init();
             LoadApplication(new App());
