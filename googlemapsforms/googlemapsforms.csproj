@@ -13,5 +13,10 @@
   <ItemGroup>
     <PackageReference Include="Xamarin.Forms" Version="4.0.0.425677" />
     <PackageReference Include="Xamarin.Essentials" Version="1.1.0" />
+    <PackageReference Include="System.Reactive" Version="4.1.5" />
+    <PackageReference Include="DynamicData" Version="6.10.0.2604" />
+  </ItemGroup>
+  <ItemGroup>
+    <Folder Include="Models\" />
   </ItemGroup>
 </Project>

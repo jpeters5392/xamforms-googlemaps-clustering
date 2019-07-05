@@ -1,14 +1,19 @@
 ﻿using System;
 using System.Collections.Generic;
+using System.Linq;
+using System.Reactive.Concurrency;
+using System.Reactive.Disposables;
+using System.Reactive.Linq;
 using System.Threading.Tasks;
-using System.Timers;
 using CoreGraphics;
 using CoreLocation;
+using DynamicData;
 using Foundation;
 using Google.Maps;
 using Google.Maps.Utils;
 using googlemapsforms;
 using googlemapsforms.iOS;
+using googlemapsforms.Models;
 using UIKit;
 using Xamarin.Forms;
 using Xamarin.Forms.Platform.iOS;
@@ -20,6 +25,9 @@ namespace googlemapsforms.iOS
     {
         private GMUClusterManager clusterManager;
         private MapDelegate mapDelegate;
+        private readonly CompositeDisposable markerSubscription = new CompositeDisposable();
+
+        private readonly Dictionary<string, ClusterMarker> renderedMarkers = new Dictionary<string, ClusterMarker>();
 
         protected override void OnElementChanged(ElementChangedEventArgs<FormsMapView> e)
         {
@@ -45,50 +53,103 @@ namespace googlemapsforms.iOS
                     SetNativeControl(mapView);
                 }
 
-                Task.Delay(2000).ContinueWith(OnTimerElapsed);                
-
                 // Configure the control and subscribe to event handlers
             }
         }
 
-        private void OnTimerElapsed(Task task)
+        protected override void Dispose(bool disposing)
         {
-            try
-            {
-                Device.BeginInvokeOnMainThread(() =>
-                {
-                    mapDelegate = new MapDelegate(Control);
-                    var iconGenerator = new GMUDefaultClusterIconGenerator();
-                    var algorithm = new GMUNonHierarchicalDistanceBasedAlgorithm();
-                    var renderer = new GMUDefaultClusterRenderer(Control, iconGenerator) { WeakDelegate = mapDelegate };
-                    clusterManager = new GMUClusterManager(Control, algorithm, renderer);
-                    clusterManager.SetDelegate(mapDelegate, mapDelegate);
+            base.Dispose(disposing);
 
-                    var markers = CreateMarkers();
-                    clusterManager.AddItems(markers);
-                    clusterManager.Cluster();
-                });
-            }
-            catch(Exception ex)
+            if (disposing)
             {
-                Console.WriteLine(ex.Message);
+                markerSubscription.Clear();
+
+                clusterManager?.Dispose();
+                mapDelegate?.Dispose();
+
+                clusterManager = null;
+                mapDelegate = null;
+
+                foreach (var item in renderedMarkers)
+                {
+                    item.Value.Dispose();
+                }
+
+                renderedMarkers.Clear();
             }
         }
 
-        private IGMUClusterItem[] CreateMarkers()
+        public override void MovedToWindow()
         {
-            var startingLat = 45.4473;
-            var startingLon = -96.7283;
-            var markers = new List<IGMUClusterItem>();
+            base.MovedToWindow();
 
-            for (var i = 0; i < 20; i++)
+            if (mapDelegate == null)
             {
-                markers.Add(new ClusterMarker(new CLLocationCoordinate2D(startingLat, startingLon), $"Marker{i}", $"Marker{i} Snippet"));
-                startingLat += 0.1;
-                startingLon -= 0.1;
+                mapDelegate = new MapDelegate(Control);
             }
 
-            return markers.ToArray();
+            if (clusterManager == null)
+            {
+                var iconGenerator = new GMUDefaultClusterIconGenerator();
+                var algorithm = new GMUNonHierarchicalDistanceBasedAlgorithm();
+                var renderer = new GMUDefaultClusterRenderer(Control, iconGenerator) { WeakDelegate = mapDelegate };
+                clusterManager = new GMUClusterManager(Control, algorithm, renderer);
+                clusterManager.SetDelegate(mapDelegate, mapDelegate);
+
+                SubscribeToMarkers();
+
+                Element.SetMapReady(DateTime.UtcNow.Ticks);
+            }
+        }
+
+        private void SubscribeToMarkers()
+        {
+            markerSubscription.Clear();
+            markerSubscription.Add(
+                Element.Markers.Connect()
+                .Synchronize()
+                .Subscribe(HandleMarkerUpdates)
+            );
+        }
+
+        private void HandleMarkerUpdates(IChangeSet<FormsClusterMarker, string> changes)
+        {
+
+            Device.BeginInvokeOnMainThread(() =>
+            {
+                
+                foreach (var change in changes)
+                {
+                    if (change.Reason == ChangeReason.Add)
+                    {
+                        var clusterMarker = ClusterMarker.FromFormsClusterMarker(change.Current);
+                        renderedMarkers.Add(change.Current.Id, clusterMarker);
+                        clusterManager.AddItem(clusterMarker);
+                    }
+                    else if (change.Reason == ChangeReason.Moved)
+                    {
+                        // since we aren't sorting we can ignore moves
+                    }
+                    else if (change.Reason == ChangeReason.Refresh)
+                    {
+                        // ignore refresh
+                    }
+                    else if (change.Reason == ChangeReason.Remove)
+                    {
+                        clusterManager.RemoveItem(renderedMarkers[change.Key]);
+                        renderedMarkers[change.Key].Dispose();
+                        renderedMarkers.Remove(change.Key);
+                    }
+                    else if (change.Reason == ChangeReason.Update)
+                    {
+                        var clusterMarker = ClusterMarker.FromFormsClusterMarker(change.Current);
+                        renderedMarkers[change.Key].Position = clusterMarker.Position;
+                    }
+                }
+
+                clusterManager.Cluster();
+            });
         }
 
         internal class MapDelegate : MapViewDelegate, IGMUClusterManagerDelegate, IGMUClusterRendererDelegate
